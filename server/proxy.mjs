@@ -317,14 +317,20 @@ function buildStateResult(
   candidates,
   national,
   election,
+  limit,
 ) {
   const updatedAt = toIsoFromTse(payload.dt || payload.dg, payload.ht || payload.hg)
-  const local = extractCandidates(payload, office, undefined, ufCode, election)
+  // Proporcional (deputados): mesmo recorte do catálogo (top N por UF).
+  // Majoritário estadual: chapa completa da UF.
+  const local = extractCandidates(payload, office, limit, ufCode, election)
   const localById = new Map(local.map((item) => [item.id, item]))
 
   const sectionsTotal = parsePtNumber(payload.s?.ts)
   const sectionsCounted = parsePtNumber(payload.s?.st)
-  const percentageCounted = parsePtNumber(payload.s?.pstn || payload.s?.pst)
+  const percentageCounted = Math.min(
+    100,
+    Math.max(0, parsePtNumber(payload.s?.pstn || payload.s?.pst)),
+  )
   const electorate = parsePtNumber(payload.e?.te)
   const totalVotes = parsePtNumber(payload.v?.tv || payload.e?.c)
   const validVotes = parsePtNumber(payload.v?.vv || payload.v?.vvc)
@@ -351,7 +357,7 @@ function buildStateResult(
         stateId: ufCode,
         officeId: office,
         votes: item.votes,
-        percentage: item.percentage,
+        percentage: Math.min(100, Math.max(0, item.percentage)),
         updatedAt,
       }))
 
@@ -490,6 +496,7 @@ async function buildDataset(office, round) {
       candidates,
       isNationalOffice,
       election,
+      config.limit,
     )
   }).filter(Boolean)
 
