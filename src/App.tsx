@@ -192,11 +192,27 @@ function SectionTitle({
   )
 }
 
+/** Escopo de estados alinhado ao TSE: Brasil nacional usa só o EA20 `br`. */
+function scopeStates(dataset: ElectionDataset, selectedState: string) {
+  if (selectedState === "BR") {
+    if (isNationalOffice(dataset.office)) {
+      const brasil = dataset.states.find((result) => result.state.id === "BR")
+      if (brasil) return [brasil]
+    }
+    return dataset.states.filter((result) => result.state.id !== "BR")
+  }
+  return dataset.states.filter((result) => result.state.id === selectedState)
+}
+
+function ufStates(dataset: ElectionDataset) {
+  return dataset.states.filter((result) => result.state.id !== "BR")
+}
+
 function candidatesForScope(dataset: ElectionDataset, selectedState: string) {
   if (selectedState === "BR") {
     if (isNationalOffice(dataset.office)) return dataset.candidates
     // Cargos estaduais no recorte Brasil: líderes de cada UF
-    return dataset.states
+    return ufStates(dataset)
       .map((result) => result.leader)
       .filter((candidate): candidate is Candidate => Boolean(candidate))
   }
@@ -236,24 +252,31 @@ function candidatesForScope(dataset: ElectionDataset, selectedState: string) {
 }
 
 function aggregateVotes(dataset: ElectionDataset, selectedState: string) {
-  const scope =
-    selectedState === "BR"
-      ? dataset.states
-      : dataset.states.filter((result) => result.state.id === selectedState)
+  const scope = scopeStates(dataset, selectedState)
   const scopedCandidates = candidatesForScope(dataset, selectedState)
 
   return scopedCandidates
     .map((candidate) => {
-      const votes = scope.reduce((sum, result) => {
-        return (
-          sum +
-          (result.votes.find((vote) => vote.candidateId === candidate.id)
-            ?.votes ?? 0)
+      const matches = scope
+        .map((result) =>
+          result.votes.find((vote) => vote.candidateId === candidate.id),
         )
-      }, 0)
-      return { candidate, votes }
+        .filter((vote): vote is NonNullable<typeof vote> => Boolean(vote))
+      const votes = matches.reduce((sum, vote) => sum + vote.votes, 0)
+      // Percentual oficial do TSE (pvap/pvapn) — não recalcular na UI.
+      const percentage =
+        matches.length === 1
+          ? matches[0].percentage
+          : matches.find((vote) => vote.stateId === candidate.stateId)
+              ?.percentage ?? matches[0]?.percentage ?? 0
+      return { candidate, votes, percentage }
     })
-    .filter((item) => selectedState === "BR" || item.votes > 0 || !isNationalOffice(dataset.office))
+    .filter(
+      (item) =>
+        selectedState === "BR" ||
+        item.votes > 0 ||
+        !isNationalOffice(dataset.office),
+    )
     .sort((a, b) => b.votes - a.votes)
 }
 
@@ -264,10 +287,7 @@ function SummaryCards({
   dataset: ElectionDataset
   selectedState: string
 }) {
-  const scope =
-    selectedState === "BR"
-      ? dataset.states
-      : dataset.states.filter((item) => item.state.id === selectedState)
+  const scope = scopeStates(dataset, selectedState)
   const totalVotes = scope.reduce(
     (sum, item) => sum + item.status.totalVotes,
     0,
@@ -284,8 +304,21 @@ function SummaryCards({
     (sum, item) => sum + item.status.sectionsCounted,
     0,
   )
-  const percentage = sections ? (counted / sections) * 100 : 0
-  const completed = scope.filter(
+  // Preferir pst/pstn oficial do TSE no recorte (ex.: Brasil = arquivo br).
+  const electorate = scope.reduce((sum, item) => sum + item.state.electorate, 0)
+  const percentage =
+    scope.length === 1
+      ? scope[0].status.percentageCounted
+      : electorate
+        ? scope.reduce(
+            (sum, item) =>
+              sum + item.status.percentageCounted * item.state.electorate,
+            0,
+          ) / electorate
+        : sections
+          ? (counted / sections) * 100
+          : 0
+  const completed = ufStates(dataset).filter(
     (item) => item.status.percentageCounted >= 95,
   ).length
   const time = new Date(dataset.updatedAt).toLocaleTimeString("pt-BR")
@@ -486,18 +519,17 @@ function CandidateRanking({
   selectedState,
   office,
 }: {
-  ranking: Array<{ candidate: Candidate; votes: number }>
+  ranking: Array<{ candidate: Candidate; votes: number; percentage: number }>
   isDemo: boolean
   selectedState: string
   office: Office
 }) {
-  const total = ranking.reduce((sum, item) => sum + item.votes, 0)
   const stateScoped = !isNationalOffice(office)
   const subtitle =
     selectedState === "BR"
       ? stateScoped
         ? "Líder de cada estado — selecione uma UF para ver a chapa completa"
-        : "Classificação nacional"
+        : "Classificação nacional (totais oficiais do TSE)"
       : `Candidatos em ${selectedState}`
 
   return (
@@ -518,7 +550,7 @@ function CandidateRanking({
           </p>
         ) : (
           ranking.map((item, index) => {
-            const percentage = total ? (item.votes / total) * 100 : 0
+            const percentage = item.percentage
             const ufLabel =
               item.candidate.stateId && item.candidate.stateId !== "BR"
                 ? item.candidate.stateId
@@ -549,7 +581,7 @@ function CandidateRanking({
                   </div>
                 </div>
                 <div className="bar-track">
-                  <span style={{ width: `${percentage}%` }} />
+                  <span style={{ width: `${Math.min(100, percentage)}%` }} />
                 </div>
               </div>
             )
@@ -568,10 +600,9 @@ function CandidateRanking({
 function BarChart({
   ranking,
 }: {
-  ranking: Array<{ candidate: Candidate; votes: number }>
+  ranking: Array<{ candidate: Candidate; votes: number; percentage: number }>
 }) {
   const [mode, setMode] = useState<"votes" | "percentage">("votes")
-  const total = ranking.reduce((sum, item) => sum + item.votes, 0)
   const maximum =
     mode === "votes" ? Math.max(...ranking.map((item) => item.votes), 1) : 100
   return (
@@ -601,12 +632,7 @@ function BarChart({
       />
       <div className="bar-chart">
         {ranking.map((item, index) => {
-          const value =
-            mode === "votes"
-              ? item.votes
-              : total
-                ? (item.votes / total) * 100
-                : 0
+          const value = mode === "votes" ? item.votes : item.percentage
           return (
             <div className="bar-column" key={item.candidate.id}>
               <span className="bar-value">
@@ -719,7 +745,7 @@ function StateTable({
   const [ascending, setAscending] = useState(false)
   const rows = useMemo(
     () =>
-      dataset.states
+      ufStates(dataset)
         .filter((row) => {
           const matchesSearch = `${row.state.name} ${row.state.id}`
             .toLowerCase()
@@ -1314,11 +1340,11 @@ export default function App() {
             onChange={setPendingState}
           >
             <option value="BR">Brasil</option>
-            {dataset?.states.map((result) => (
+            {dataset ? ufStates(dataset).map((result) => (
               <option value={result.state.id} key={result.state.id}>
                 {result.state.id} — {result.state.name}
               </option>
-            ))}
+            )) : null}
           </SelectField>
           <SelectField
             label="Situação"

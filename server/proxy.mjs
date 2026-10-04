@@ -501,6 +501,23 @@ async function buildDataset(office, round) {
     )
   }).filter(Boolean)
 
+  // Cargo nacional: inclui o recorte oficial Brasil (EA20 br-*-u.json),
+  // para votos/%/apurado baterem com o site do TSE — sem somar UFs.
+  if (isNationalOffice && national) {
+    states.unshift(
+      buildStateResult(
+        "BR",
+        "Brasil",
+        national,
+        office,
+        candidates,
+        true,
+        election,
+        config.limit,
+      ),
+    )
+  }
+
   if (!states.length) {
     throw new Error("Nenhum estado retornou dados do TSE para este cargo")
   }
