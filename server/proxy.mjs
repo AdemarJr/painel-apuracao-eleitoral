@@ -26,7 +26,8 @@ const PORT = Number(process.env.PORT ?? 8787)
 const HOST = process.env.HOST ?? "0.0.0.0"
 const DIST_DIR =
   process.env.DIST_DIR ?? path.resolve(__dirname, "../dist")
-const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS ?? 5000)
+const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS ?? 2000)
+const LIVE_REFRESH_MS = Number(process.env.LIVE_REFRESH_MS ?? 2500)
 const STATUS_OVERRIDE = process.env.ELECTION_STATUS ?? ""
 const TSE_MODE = (process.env.TSE_MODE ?? "oficial").toLowerCase()
 const TSE_BASE =
@@ -520,14 +521,125 @@ async function buildDataset(office, round) {
   }
 }
 
-async function getResults(office, round) {
-  const key = `${office}:${round}:${STATUS_OVERRIDE || "auto"}`
-  const cached = cache.get(key)
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.payload
+const refreshLocks = new Map()
+/** key → Set<ServerResponse> para SSE */
+const streamSubscribers = new Map()
 
-  const payload = await buildDataset(office, round)
-  cache.set(key, { at: Date.now(), payload })
-  return payload
+function resultsCacheKey(office, round) {
+  return `${office}:${round}:${STATUS_OVERRIDE || "auto"}`
+}
+
+function parseResultsCacheKey(key) {
+  const parts = String(key).split(":")
+  const status = parts.pop()
+  const round = parts.pop()
+  const office = parts.join(":")
+  return { office, round, status }
+}
+
+function datasetFingerprint(payload) {
+  if (!payload) return ""
+  let counted = 0
+  let votes = 0
+  for (const state of payload.states ?? []) {
+    counted += Number(state.status?.percentageCounted) || 0
+    votes += Number(state.status?.totalVotes) || 0
+  }
+  const leader = payload.candidates?.[0]
+  return [
+    payload.updatedAt,
+    counted.toFixed(4),
+    votes,
+    leader?.id ?? "",
+    leader?.ballotName ?? "",
+  ].join("|")
+}
+
+function addStreamSubscriber(key, res) {
+  let set = streamSubscribers.get(key)
+  if (!set) {
+    set = new Set()
+    streamSubscribers.set(key, set)
+  }
+  set.add(res)
+}
+
+function removeStreamSubscriber(key, res) {
+  const set = streamSubscribers.get(key)
+  if (!set) return
+  set.delete(res)
+  if (!set.size) streamSubscribers.delete(key)
+}
+
+function pushToStreamSubscribers(key, payload) {
+  const set = streamSubscribers.get(key)
+  if (!set?.size) return
+  const chunk = `event: results\ndata: ${JSON.stringify(payload)}\n\n`
+  for (const res of set) {
+    try {
+      res.write(chunk)
+    } catch {
+      removeStreamSubscriber(key, res)
+    }
+  }
+}
+
+async function getResults(office, round, { force = false } = {}) {
+  const key = resultsCacheKey(office, round)
+  const cached = cache.get(key)
+  if (!force && cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.payload
+  }
+
+  if (refreshLocks.has(key)) return refreshLocks.get(key)
+
+  const promise = (async () => {
+    try {
+      const payload = await buildDataset(office, round)
+      const fp = datasetFingerprint(payload)
+      const previousFp = cached?.fp
+      cache.set(key, { at: Date.now(), payload, fp })
+      if (previousFp !== fp) pushToStreamSubscribers(key, payload)
+      return payload
+    } finally {
+      refreshLocks.delete(key)
+    }
+  })()
+
+  refreshLocks.set(key, promise)
+  return promise
+}
+
+async function liveRefreshLoop() {
+  for (;;) {
+    const keys = [...streamSubscribers.keys()]
+    if (keys.length) {
+      await Promise.all(
+        keys.map(async (key) => {
+          const { office, round } = parseResultsCacheKey(key)
+          if (!OFFICE_CONFIG[office]) return
+          try {
+            await getResults(office, round, { force: true })
+          } catch (error) {
+            const chunk = `event: error\ndata: ${JSON.stringify({
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Falha ao consultar o TSE",
+            })}\n\n`
+            for (const res of streamSubscribers.get(key) ?? []) {
+              try {
+                res.write(chunk)
+              } catch {
+                removeStreamSubscriber(key, res)
+              }
+            }
+          }
+        }),
+      )
+    }
+    await new Promise((resolve) => setTimeout(resolve, LIVE_REFRESH_MS))
+  }
 }
 
 const MIME = {
@@ -635,11 +747,72 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === "GET" && url.pathname === "/stream") {
+    const office = url.searchParams.get("office") ?? "Presidente"
+    if (!OFFICE_CONFIG[office]) {
+      sendJson(res, 400, {
+        error: `Cargo não suportado: ${office}`,
+        supported: Object.keys(OFFICE_CONFIG),
+      })
+      return
+    }
+
+    const round = url.searchParams.get("round") ?? "1"
+    const key = resultsCacheKey(office, round)
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+      "X-Accel-Buffering": "no",
+    })
+    if (typeof res.flushHeaders === "function") res.flushHeaders()
+    res.write(`event: ready\ndata: ${JSON.stringify({ office, round })}\n\n`)
+
+    addStreamSubscriber(key, res)
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": ping\n\n")
+      } catch {
+        clearInterval(heartbeat)
+        removeStreamSubscriber(key, res)
+      }
+    }, 15000)
+
+    const cleanup = () => {
+      clearInterval(heartbeat)
+      removeStreamSubscriber(key, res)
+    }
+    req.on("close", cleanup)
+    req.on("aborted", cleanup)
+
+    getResults(office, round, { force: true })
+      .then((payload) => {
+        if (!res.writableEnded) {
+          res.write(`event: results\ndata: ${JSON.stringify(payload)}\n\n`)
+        }
+      })
+      .catch((error) => {
+        if (!res.writableEnded) {
+          res.write(
+            `event: error\ndata: ${JSON.stringify({
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Falha ao consultar o TSE",
+            })}\n\n`,
+          )
+        }
+      })
+    return
+  }
+
   if (req.method === "GET" && serveStatic(req, res, url.pathname)) return
 
   sendJson(res, 404, {
     error:
-      "Rota não encontrada. Use /, GET /results?office=Presidente&round=1 ou POST /presence",
+      "Rota não encontrada. Use /, GET /results, GET /stream ou POST /presence",
   })
 })
 
@@ -650,10 +823,14 @@ server.listen(PORT, HOST, () => {
   console.log(`Base: ${TSE_BASE}`)
   console.log(`UI: ${fs.existsSync(DIST_DIR) ? DIST_DIR : "não encontrada"}`)
   console.log(`Cache: ${CACHE_TTL_MS}ms`)
+  console.log(`Live refresh: ${LIVE_REFRESH_MS}ms (SSE /stream)`)
   console.log(
     STATUS_OVERRIDE
       ? `Status forçado: ${STATUS_OVERRIDE}`
       : "Status derivado do campo and/tf/pst do TSE",
   )
   console.log(`Exemplo U:  ${unifiedUrl(sampleElection, "0001", "br")}`)
+  liveRefreshLoop().catch((error) => {
+    console.error("Falha no loop de atualização ao vivo:", error)
+  })
 })

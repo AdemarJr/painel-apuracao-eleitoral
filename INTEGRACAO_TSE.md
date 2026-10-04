@@ -38,8 +38,9 @@ pnpm dev
 
 Abra `http://127.0.0.1:8443/`.
 
-Atualização automática no painel: a cada **5 segundos** (refresh silencioso).
-Cache do proxy: **5 segundos**.
+Atualização automática no painel: **SSE `/stream`** (push ao vivo) + fallback por polling.
+O proxy refresca o TSE a cada **~2,5s** para os cargos com assinantes conectados.
+Cache HTTP: **2 segundos**.
 
 ## Simulado (opcional)
 

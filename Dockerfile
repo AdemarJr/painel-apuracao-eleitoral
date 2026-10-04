@@ -14,7 +14,8 @@ ENV HOST=0.0.0.0
 ENV PORT=3000
 ENV TSE_MODE=oficial
 ENV DIST_DIR=/app/dist
-ENV CACHE_TTL_MS=5000
+ENV CACHE_TTL_MS=2000
+ENV LIVE_REFRESH_MS=2500
 COPY package.json ./
 COPY server ./server
 COPY --from=build /app/dist ./dist

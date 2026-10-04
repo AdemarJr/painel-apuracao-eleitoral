@@ -18,6 +18,7 @@ function resolveApiBaseUrl() {
 export const API_BASE_URL = resolveApiBaseUrl()
 const API_RESULTS_PATH =
   import.meta.env.VITE_ELECTION_RESULTS_PATH ?? "/results"
+const API_STREAM_PATH = import.meta.env.VITE_ELECTION_STREAM_PATH ?? "/stream"
 const REQUEST_TIMEOUT_MS = 45000
 const MAX_REQUEST_ATTEMPTS = 3
 
@@ -252,8 +253,41 @@ async function delay(duration: number) {
   await new Promise((resolve) => window.setTimeout(resolve, duration))
 }
 
+function normalizeOfficialDataset(
+  payload: ElectionDataset,
+  office: Office,
+  snapshotsFallback: (dataset: ElectionDataset) => VoteSnapshot[],
+): ElectionDataset {
+  if (payload.office !== office)
+    throw new Error("A fonte oficial retornou dados de outro cargo")
+
+  const dataset: ElectionDataset = {
+    ...payload,
+    isDemo: false,
+    snapshots: Array.isArray(payload.snapshots) ? payload.snapshots : [],
+  }
+  const published = dataset.states.some(
+    (result) =>
+      result.status.totalVotes > 0 ||
+      result.status.percentageCounted > 0 ||
+      result.votes.some((vote) => vote.votes > 0),
+  )
+  if (
+    published &&
+    dataset.election.status !== "counting" &&
+    dataset.election.status !== "completed"
+  ) {
+    dataset.election = { ...dataset.election, status: "counting" }
+  }
+  const snapshots = dataset.snapshots.length
+    ? dataset.snapshots
+    : snapshotsFallback(dataset)
+  return { ...dataset, snapshots }
+}
+
 export class ElectionDataService {
   private timer: number | null = null
+  private stream: EventSource | null = null
   private snapshots = new Map<string, VoteSnapshot[]>()
   private inFlight: Promise<ElectionDataset> | null = null
   private inFlightKey = ""
@@ -367,35 +401,75 @@ export class ElectionDataService {
     endpoint.searchParams.set("_ts", String(Date.now()))
     const payload = await this.request(endpoint)
     validateDataset(payload)
-    if (payload.office !== office)
-      throw new Error("A fonte oficial retornou dados de outro cargo")
-
-    const dataset: ElectionDataset = {
-      ...payload,
-      isDemo: false,
-      snapshots: Array.isArray(payload.snapshots) ? payload.snapshots : [],
-    }
-    // Se a fonte já publicou votos, não mantenha o painel em "scheduled".
-    const published = dataset.states.some(
-      (result) =>
-        result.status.totalVotes > 0 ||
-        result.status.percentageCounted > 0 ||
-        result.votes.some((vote) => vote.votes > 0),
+    return normalizeOfficialDataset(payload, office, (dataset) =>
+      this.recordSnapshot(dataset),
     )
-    if (
-      published &&
-      dataset.election.status !== "counting" &&
-      dataset.election.status !== "completed"
-    ) {
-      dataset.election = { ...dataset.election, status: "counting" }
-    }
-    const snapshots = dataset.snapshots.length
-      ? dataset.snapshots
-      : this.recordSnapshot(dataset)
-    return { ...dataset, snapshots }
   }
 
-  startPolling(callback: () => void, intervalMs = 5000) {
+  startLiveStream(
+    office: Office,
+    round: number,
+    onData: (dataset: ElectionDataset) => void,
+    onError?: (message: string) => void,
+  ) {
+    this.stopLiveStream()
+    const baseUrl = resolveApiBaseUrl()
+    if (!baseUrl || typeof EventSource === "undefined") return false
+
+    const endpoint = new URL(API_STREAM_PATH, baseUrl)
+    endpoint.searchParams.set("office", office)
+    endpoint.searchParams.set("round", String(round))
+
+    const stream = new EventSource(endpoint.href)
+    this.stream = stream
+
+    stream.addEventListener("results", (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as unknown
+        validateDataset(payload)
+        onData(
+          normalizeOfficialDataset(payload, office, (dataset) =>
+            this.recordSnapshot(dataset),
+          ),
+        )
+      } catch (reason) {
+        onError?.(
+          reason instanceof Error
+            ? reason.message
+            : "Falha ao processar atualização ao vivo",
+        )
+      }
+    })
+
+    stream.addEventListener("error", (event) => {
+      if (event instanceof MessageEvent && event.data) {
+        try {
+          const payload = JSON.parse(event.data) as { error?: string }
+          if (payload.error) onError?.(payload.error)
+        } catch {
+          /* ignore malformed SSE error payloads */
+        }
+      }
+    })
+
+    stream.onerror = () => {
+      // EventSource reconecta sozinho; só sinaliza se a conexão cair de vez.
+      if (stream.readyState === EventSource.CLOSED) {
+        onError?.("Conexão ao vivo interrompida")
+      }
+    }
+
+    return true
+  }
+
+  stopLiveStream() {
+    if (this.stream) {
+      this.stream.close()
+      this.stream = null
+    }
+  }
+
+  startPolling(callback: () => void, intervalMs = 10000) {
     this.stopPolling()
     this.timer = window.setInterval(callback, intervalMs)
   }

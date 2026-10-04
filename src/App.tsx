@@ -1104,25 +1104,49 @@ export default function App() {
 
   useEffect(() => {
     if (!autoUpdate) {
+      electionDataService.stopLiveStream()
       electionDataService.stopPolling()
       return
     }
 
+    const apiRound = round === "second" ? 2 : 1
+    const applyLive = (data: ElectionDataset) => {
+      setDataset(data)
+      setStatus("online")
+      setError("")
+    }
+
+    const streaming = electionDataService.startLiveStream(
+      office,
+      apiRound,
+      applyLive,
+      (message) => {
+        // Mantém o último resultado; o fallback por polling tenta recuperar.
+        if (!datasetRef.current) {
+          setStatus("error")
+          setError(message)
+        }
+      },
+    )
+
+    // Fallback: se SSE não conectar, ou como rede de segurança a cada 10s.
     const tick = () => {
       if (document.visibilityState === "hidden") return
       void loadData(office, { silent: true })
     }
+    electionDataService.startPolling(tick, streaming ? 10000 : 3000)
 
-    electionDataService.startPolling(tick, 5000)
     const onVisible = () => {
       if (document.visibilityState === "visible") tick()
     }
     document.addEventListener("visibilitychange", onVisible)
+
     return () => {
+      electionDataService.stopLiveStream()
       electionDataService.stopPolling()
       document.removeEventListener("visibilitychange", onVisible)
     }
-  }, [autoUpdate, loadData, office])
+  }, [autoUpdate, loadData, office, round])
 
   useEffect(() => {
     presenceService.start(setOnlineViewers)
@@ -1164,7 +1188,7 @@ export default function App() {
       : status === "error"
         ? "Falha na atualização"
         : autoUpdate
-          ? "Ao vivo · 5s"
+          ? "Ao vivo"
           : "Dados atualizados"
   const isDemoMode = dataset?.isDemo ?? false
   const showLiveResults = dataset ? isApurationLive(dataset) : false
