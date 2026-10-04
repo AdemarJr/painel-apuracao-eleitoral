@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { brazilStatePaths } from "./data/brazilMap"
 import { electionDataService } from "./services/ElectionDataService"
 import { presenceService } from "./services/PresenceService"
@@ -1062,11 +1062,19 @@ export default function App() {
   const [round, setRound] = useState("current")
   const [situation, setSituation] = useState("all")
   const [activeSituation, setActiveSituation] = useState("all")
+  const datasetRef = useRef<ElectionDataset | null>(null)
+  datasetRef.current = dataset
 
   const loadData = useCallback(
-    async (selectedOffice: Office = office) => {
-      setStatus("updating")
-      setError("")
+    async (
+      selectedOffice: Office = office,
+      options: { silent?: boolean } = {},
+    ) => {
+      const silent = Boolean(options.silent)
+      if (!silent) {
+        setStatus("updating")
+        setError("")
+      }
       try {
         const data = await electionDataService.fetchData(
           selectedOffice,
@@ -1074,26 +1082,48 @@ export default function App() {
         )
         setDataset(data)
         setStatus("online")
+        setError("")
       } catch (reason) {
-        setStatus("error")
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Não foi possível atualizar os dados.",
-        )
+        // Em refresh silencioso, mantém o último snapshot na tela e tenta de novo.
+        if (!silent || !datasetRef.current) {
+          setStatus("error")
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Não foi possível atualizar os dados.",
+          )
+        }
       }
     },
     [office, round],
   )
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    void loadData(office, { silent: false })
+  }, [loadData, office])
+
   useEffect(() => {
-    if (autoUpdate) electionDataService.startPolling(() => loadData(), 20000)
-    else electionDataService.stopPolling()
-    return () => electionDataService.stopPolling()
-  }, [autoUpdate, loadData])
+    if (!autoUpdate) {
+      electionDataService.stopPolling()
+      return
+    }
+
+    const tick = () => {
+      if (document.visibilityState === "hidden") return
+      void loadData(office, { silent: true })
+    }
+
+    electionDataService.startPolling(tick, 5000)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      electionDataService.stopPolling()
+      document.removeEventListener("visibilitychange", onVisible)
+    }
+  }, [autoUpdate, loadData, office])
+
   useEffect(() => {
     presenceService.start(setOnlineViewers)
     return () => presenceService.stop()
@@ -1133,7 +1163,9 @@ export default function App() {
       ? "Atualizando dados"
       : status === "error"
         ? "Falha na atualização"
-        : "Dados atualizados"
+        : autoUpdate
+          ? "Ao vivo · 5s"
+          : "Dados atualizados"
   const isDemoMode = dataset?.isDemo ?? false
   const showLiveResults = dataset ? isApurationLive(dataset) : false
   const electionPhase = dataset?.election.status

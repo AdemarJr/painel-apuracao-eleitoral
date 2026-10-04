@@ -26,7 +26,7 @@ const PORT = Number(process.env.PORT ?? 8787)
 const HOST = process.env.HOST ?? "0.0.0.0"
 const DIST_DIR =
   process.env.DIST_DIR ?? path.resolve(__dirname, "../dist")
-const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS ?? 10000)
+const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS ?? 5000)
 const STATUS_OVERRIDE = process.env.ELECTION_STATUS ?? ""
 const TSE_MODE = (process.env.TSE_MODE ?? "oficial").toLowerCase()
 const TSE_BASE =

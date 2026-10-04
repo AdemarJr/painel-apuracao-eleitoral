@@ -255,6 +255,8 @@ async function delay(duration: number) {
 export class ElectionDataService {
   private timer: number | null = null
   private snapshots = new Map<string, VoteSnapshot[]>()
+  private inFlight: Promise<ElectionDataset> | null = null
+  private inFlightKey = ""
 
   private async request(endpoint: URL): Promise<unknown> {
     let lastError: Error | null = null
@@ -330,6 +332,26 @@ export class ElectionDataService {
   }
 
   async fetchData(office: Office, round = 1): Promise<ElectionDataset> {
+    const key = `${office}:${round}`
+    if (this.inFlight && this.inFlightKey === key) return this.inFlight
+
+    const run = this.fetchDataUncached(office, round)
+    this.inFlight = run
+    this.inFlightKey = key
+    try {
+      return await run
+    } finally {
+      if (this.inFlight === run) {
+        this.inFlight = null
+        this.inFlightKey = ""
+      }
+    }
+  }
+
+  private async fetchDataUncached(
+    office: Office,
+    round = 1,
+  ): Promise<ElectionDataset> {
     const baseUrl = resolveApiBaseUrl()
     const forceDemo = import.meta.env.VITE_ELECTION_USE_DEMO === "true"
 
@@ -341,6 +363,8 @@ export class ElectionDataService {
     const endpoint = new URL(API_RESULTS_PATH, baseUrl)
     endpoint.searchParams.set("office", office)
     endpoint.searchParams.set("round", String(round))
+    // Evita cache intermediário do browser/CDN no caminho do painel.
+    endpoint.searchParams.set("_ts", String(Date.now()))
     const payload = await this.request(endpoint)
     validateDataset(payload)
     if (payload.office !== office)
@@ -371,7 +395,7 @@ export class ElectionDataService {
     return { ...dataset, snapshots }
   }
 
-  startPolling(callback: () => void, intervalMs = 60000) {
+  startPolling(callback: () => void, intervalMs = 5000) {
     this.stopPolling()
     this.timer = window.setInterval(callback, intervalMs)
   }
