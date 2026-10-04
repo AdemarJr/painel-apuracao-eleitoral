@@ -145,15 +145,55 @@ const STATES = [
 
 const cache = new Map()
 
+/** Visitantes ativos (aba aberta) — Map<visitorId, lastSeenMs> */
+const PRESENCE_TTL_MS = Number(process.env.PRESENCE_TTL_MS ?? 45000)
+const presence = new Map()
+
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Accept, Cache-Control",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Accept, Cache-Control, Content-Type",
   })
   res.end(status === 204 ? "" : JSON.stringify(payload))
+}
+
+function prunePresence(now = Date.now()) {
+  for (const [id, at] of presence) {
+    if (now - at > PRESENCE_TTL_MS) presence.delete(id)
+  }
+}
+
+function normalizeVisitorId(value) {
+  if (typeof value !== "string") return null
+  const id = value.trim()
+  if (!id || id.length > 64) return null
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null
+  return id
+}
+
+function touchPresence(rawId) {
+  const now = Date.now()
+  prunePresence(now)
+  const id = normalizeVisitorId(rawId)
+  if (id) presence.set(id, now)
+  return {
+    online: presence.size,
+    ttlMs: PRESENCE_TTL_MS,
+  }
+}
+
+async function readJsonBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  if (!chunks.length) return {}
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+  } catch {
+    return {}
+  }
 }
 
 function padElection(code) {
@@ -530,6 +570,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`)
 
   if (req.method === "GET" && url.pathname === "/health") {
+    prunePresence()
     sendJson(res, 200, {
       ok: true,
       mode: TSE_MODE,
@@ -537,6 +578,7 @@ const server = http.createServer(async (req, res) => {
       statusOverride: STATUS_OVERRIDE || null,
       offices: Object.keys(OFFICE_CONFIG),
       servesUi: fs.existsSync(DIST_DIR),
+      online: presence.size,
       sampleAcompanhamento: acompanhamentoUrl(
         OFFICE_CONFIG.Presidente.election,
         "ac",
@@ -547,6 +589,19 @@ const server = http.createServer(async (req, res) => {
         "br",
       ),
     })
+    return
+  }
+
+  if (
+    (req.method === "GET" || req.method === "POST") &&
+    url.pathname === "/presence"
+  ) {
+    let visitorId = url.searchParams.get("id")
+    if (req.method === "POST") {
+      const body = await readJsonBody(req)
+      visitorId = body?.id ?? visitorId
+    }
+    sendJson(res, 200, touchPresence(visitorId))
     return
   }
 
@@ -576,7 +631,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && serveStatic(req, res, url.pathname)) return
 
   sendJson(res, 404, {
-    error: "Rota não encontrada. Use / ou GET /results?office=Presidente&round=1",
+    error:
+      "Rota não encontrada. Use /, GET /results?office=Presidente&round=1 ou POST /presence",
   })
 })
 

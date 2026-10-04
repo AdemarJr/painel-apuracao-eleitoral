@@ -39,6 +39,11 @@ h1, h2, h3, p { margin: 0; }
 .connection div { display: grid; gap: 2px; }
 .connection strong { font-size: 12px; color: var(--navy); }
 .connection small { font-size: 10px; color: var(--muted); }
+.viewers-chip { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe; }
+.viewers-chip div { display: grid; gap: 2px; }
+.viewers-chip strong { font-size: 12px; color: var(--navy); }
+.viewers-chip small { font-size: 10px; color: var(--muted); }
+.viewers-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); flex-shrink: 0; }
 .status-dot { width: 8px; height: 8px; display: inline-block; border-radius: 50%; background: #8793a4; box-shadow: 0 0 0 4px #edf0f4; }
 .status-dot.online { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
 .status-dot.updating { background: #e59a25; box-shadow: 0 0 0 4px #fff3de; animation: pulse 1.2s infinite; }
@@ -194,7 +199,7 @@ footer a:hover { text-decoration: underline; }
 }
 @media (max-width: 720px) {
   .topbar { height: auto; min-height: 70px; padding: 13px 16px; align-items: flex-start; }.brand-mark { width: 34px; height: 34px; }.brand h1 { font-size: 14px; }
-  .connection { display: none; }.header-actions { gap: 8px; }.header-actions .toggle-row { display: none; }.secondary-button { width: 36px; padding: 0; }.secondary-button svg { display: block; }.secondary-button { font-size: 0; }
+  .connection { display: none; }.header-actions { gap: 8px; }.header-actions .toggle-row { display: none; }.viewers-chip { padding: 6px 8px; }.viewers-chip small { display: none; }.secondary-button { width: 36px; padding: 0; }.secondary-button svg { display: block; }.secondary-button { font-size: 0; }
   main { padding: 17px 12px 35px; }.context-row { align-items: flex-start; }.demo-badge, .official-badge, .scheduled-badge { align-items: flex-start; flex-direction: column; gap: 6px; }.source-chip { display: none; }
   .awaiting-card { grid-template-columns: 1fr; padding: 20px; gap: 18px; }.awaiting-candidates { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 18px; }.awaiting-copy h2 { font-size: 22px; }
   .filter-bar { grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }.primary-button { width: 100%; }.filter-auto { display: flex; }

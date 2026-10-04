@@ -39,8 +39,16 @@ export default defineConfig(({ mode }) => {
         ignored: ["**/.figma/**"],
       },
       proxy: {
-        // Encaminha /results ao proxy TSE local (server/proxy.mjs)
+        // Encaminha APIs ao proxy TSE local (server/proxy.mjs)
         "/results": {
+          target: "http://127.0.0.1:8787",
+          changeOrigin: true,
+        },
+        "/presence": {
+          target: "http://127.0.0.1:8787",
+          changeOrigin: true,
+        },
+        "/health": {
           target: "http://127.0.0.1:8787",
           changeOrigin: true,
         },

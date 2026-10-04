@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { brazilStatePaths } from "./data/brazilMap"
 import { electionDataService } from "./services/ElectionDataService"
+import { presenceService } from "./services/PresenceService"
 import type {
   Candidate,
   ConnectionStatus,
@@ -1052,6 +1053,7 @@ export default function App() {
   const [dataset, setDataset] = useState<ElectionDataset | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>("updating")
   const [error, setError] = useState("")
+  const [onlineViewers, setOnlineViewers] = useState<number | null>(null)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [office, setOffice] = useState<Office>("Presidente")
   const [pendingOffice, setPendingOffice] = useState<Office>("Presidente")
@@ -1092,6 +1094,10 @@ export default function App() {
     else electionDataService.stopPolling()
     return () => electionDataService.stopPolling()
   }, [autoUpdate, loadData])
+  useEffect(() => {
+    presenceService.start(setOnlineViewers)
+    return () => presenceService.stop()
+  }, [])
 
   function applyFilters() {
     setOffice(pendingOffice)
@@ -1192,6 +1198,17 @@ export default function App() {
               </small>
             </div>
           </div>
+          {onlineViewers !== null ? (
+            <div className="viewers-chip" title="Abas ativas neste painel">
+              <span className="viewers-dot" aria-hidden="true" />
+              <div>
+                <strong>
+                  {onlineViewers.toLocaleString("pt-BR")} online
+                </strong>
+                <small>assistindo agora</small>
+              </div>
+            </div>
+          ) : null}
           <button
             type="button"
             className="secondary-button"
