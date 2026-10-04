@@ -185,6 +185,12 @@ function acompanhamentoUrl(election, uf) {
   return `${TSE_BASE}/ele2026/${election}/dados/${uf}/${uf}-e${code}-ab.json`
 }
 
+function candidatePhotoUrl(election, stateId, sqcand) {
+  if (!sqcand) return undefined
+  const uf = String(stateId || "BR").toLowerCase()
+  return `${TSE_BASE}/ele2026/${election}/fotos/${uf}/${sqcand}.jpeg`
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -205,7 +211,7 @@ function resolveCandidateStateId(payload, fallbackUf) {
   return String(payload?.cdabr || "BR").toUpperCase()
 }
 
-function extractCandidates(payload, office, limit, fallbackUf) {
+function extractCandidates(payload, office, limit, fallbackUf, election) {
   const cargo = payload.carg?.[0]
   if (!cargo) return []
   const stateId = resolveCandidateStateId(payload, fallbackUf)
@@ -216,14 +222,18 @@ function extractCandidates(payload, office, limit, fallbackUf) {
       for (const candidate of party.cand ?? []) {
         const votes = parsePtNumber(candidate.vap)
         const percentage = parsePtNumber(candidate.pvapn || candidate.pvap)
+        const id = String(
+          candidate.sqcand || `${stateId}-${party.sg}-${candidate.n}`,
+        )
         collected.push({
-          id: String(candidate.sqcand || `${stateId}-${party.sg}-${candidate.n}`),
+          id,
           name: candidate.nm || candidate.nmu || `Candidato ${candidate.n}`,
           ballotName: candidate.nmu || candidate.nm || `Candidato ${candidate.n}`,
           party: party.sg || agr.nm || "—",
           number: parsePtNumber(candidate.n),
           office,
           stateId,
+          photoUrl: candidatePhotoUrl(election, stateId, candidate.sqcand),
           votes,
           percentage,
           sequence: parsePtNumber(candidate.seq) || Number.MAX_SAFE_INTEGER,
@@ -259,9 +269,17 @@ function resolveStatus(payload) {
   return "scheduled"
 }
 
-function buildStateResult(ufCode, ufName, payload, office, candidates, national) {
+function buildStateResult(
+  ufCode,
+  ufName,
+  payload,
+  office,
+  candidates,
+  national,
+  election,
+) {
   const updatedAt = toIsoFromTse(payload.dt || payload.dg, payload.ht || payload.hg)
-  const local = extractCandidates(payload, office, undefined, ufCode)
+  const local = extractCandidates(payload, office, undefined, ufCode, election)
   const localById = new Map(local.map((item) => [item.id, item]))
 
   const sectionsTotal = parsePtNumber(payload.s?.ts)
@@ -310,6 +328,7 @@ function buildStateResult(ufCode, ufName, payload, office, candidates, national)
           number: localById.get(leaderId)?.number || 0,
           office,
           stateId: ufCode,
+          photoUrl: localById.get(leaderId)?.photoUrl,
         }
       : undefined)
 
@@ -392,11 +411,17 @@ async function buildDataset(office, round) {
   const isNationalOffice = office === "Presidente"
   const candidateMap = new Map()
   const seedLists = isNationalOffice
-    ? [extractCandidates(national, office, config.limit, "BR")]
+    ? [extractCandidates(national, office, config.limit, "BR", election)]
     : statePayloads
         .filter((item) => item.payload)
         .map((item) =>
-          extractCandidates(item.payload, office, config.limit, item.uf),
+          extractCandidates(
+            item.payload,
+            office,
+            config.limit,
+            item.uf,
+            election,
+          ),
         )
 
   for (const list of seedLists) {
@@ -424,6 +449,7 @@ async function buildDataset(office, round) {
       office,
       candidates,
       isNationalOffice,
+      election,
     )
   }).filter(Boolean)
 

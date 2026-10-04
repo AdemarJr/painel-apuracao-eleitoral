@@ -434,6 +434,51 @@ function BrazilMap({
   )
 }
 
+function CandidatePhoto({
+  candidate,
+  size = 40,
+}: {
+  candidate?: Candidate | null
+  size?: number
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const photoUrl = candidate?.photoUrl
+  const failed = Boolean(photoUrl && failedUrl === photoUrl)
+  const initials = (candidate?.ballotName || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+
+  if (!photoUrl || failed) {
+    return (
+      <span
+        className="candidate-photo fallback"
+        style={{ width: size, height: size }}
+        aria-hidden="true"
+      >
+        {initials}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      className="candidate-photo"
+      src={photoUrl}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedUrl(photoUrl)}
+    />
+  )
+}
+
 function CandidateRanking({
   ranking,
   isDemo,
@@ -485,6 +530,7 @@ function CandidateRanking({
                   <span className="rank-number">
                     {String(index + 1).padStart(2, "0")}
                   </span>
+                  <CandidatePhoto candidate={item.candidate} size={42} />
                   <div className="candidate-info">
                     <strong>
                       {item.candidate.ballotName}
@@ -882,6 +928,7 @@ function StateDetail({
         {ranking.map(({ vote, candidate }, index) => (
           <div key={vote.candidateId}>
             <span>{index + 1}</span>
+            <CandidatePhoto candidate={candidate} size={36} />
             <strong>{candidate?.ballotName}</strong>
             <small>{candidate?.party}</small>
             <b>{numberFormat.format(vote.votes)} votos</b>
@@ -976,16 +1023,22 @@ function AwaitingApuration({
           </p>
           <div className="awaiting-list">
             {candidates.slice(0, 40).map((candidate) => (
-              <div key={`${candidate.id}-${candidate.stateId ?? "br"}`}>
-                <strong>
-                  {candidate.ballotName}
-                  {candidate.stateId && candidate.stateId !== "BR" ? (
-                    <em className="uf-tag"> {candidate.stateId}</em>
-                  ) : null}
-                </strong>
-                <span>
-                  {candidate.party} · {candidate.number}
-                </span>
+              <div
+                key={`${candidate.id}-${candidate.stateId ?? "br"}`}
+                className="awaiting-candidate-row"
+              >
+                <CandidatePhoto candidate={candidate} size={38} />
+                <div>
+                  <strong>
+                    {candidate.ballotName}
+                    {candidate.stateId && candidate.stateId !== "BR" ? (
+                      <em className="uf-tag"> {candidate.stateId}</em>
+                    ) : null}
+                  </strong>
+                  <span>
+                    {candidate.party} · {candidate.number}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

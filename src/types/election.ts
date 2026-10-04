@@ -18,6 +18,8 @@ export interface Candidate {
   office: Office
   /** UF da candidatura; "BR" para cargos nacionais (Presidente). */
   stateId?: string
+  /** URL da foto oficial no TSE (quando disponível). */
+  photoUrl?: string
 }
 
 export interface State {
