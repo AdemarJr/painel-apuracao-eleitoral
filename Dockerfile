@@ -3,9 +3,9 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html tsconfig.json vite.config.ts ./
+COPY index.html tsconfig.json vite.config.easypanel.ts ./
 COPY src ./src
-RUN npm run build
+RUN npx vite build --config vite.config.easypanel.ts
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
