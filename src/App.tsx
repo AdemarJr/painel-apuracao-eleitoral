@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { brazilStatePaths } from "./data/brazilMap"
+import ElectoralMap from "./components/ElectoralMap"
 import { electionDataService } from "./services/ElectionDataService"
 import { presenceService } from "./services/PresenceService"
 import type {
@@ -350,121 +350,6 @@ function SummaryCards({
         </Card>
       ))}
     </div>
-  )
-}
-
-function BrazilMap({
-  dataset,
-  selectedState,
-  onSelect,
-}: {
-  dataset: ElectionDataset
-  selectedState: string
-  onSelect: (state: string) => void
-}) {
-  const [hovered, setHovered] = useState<string | null>(null)
-  const resultMap = useMemo(
-    () =>
-      Object.fromEntries(
-        dataset.states.map((result) => [result.state.id, result]),
-      ),
-    [dataset],
-  )
-  const tooltip = hovered ? resultMap[hovered] : undefined
-  const leader = tooltip
-    ? dataset.candidates.find(
-        (candidate) =>
-          candidate.id ===
-          tooltip.votes.slice().sort((a, b) => b.votes - a.votes)[0]
-            ?.candidateId,
-      )
-    : undefined
-  const leaderVote = tooltip?.votes.slice().sort((a, b) => b.votes - a.votes)[0]
-
-  return (
-    <Card className="map-card">
-      <SectionTitle
-        icon="map"
-        title="Distribuição geográfica"
-        subtitle="Intensidade por percentual de totalização"
-      />
-      <div className="map-layout">
-        <div className="map-stage" onMouseLeave={() => setHovered(null)}>
-          <svg
-            className="brazil-map"
-            viewBox="0 0 620 570"
-            role="img"
-            aria-label="Mapa do Brasil dividido por estados"
-          >
-            {Object.entries(brazilStatePaths).map(([uf, path]) => {
-              const percentage = resultMap[uf]?.status.percentageCounted ?? 0
-              const level = Math.min(
-                4,
-                Math.max(1, Math.ceil((percentage - 55) / 11)),
-              )
-              return (
-                <path
-                  key={uf}
-                  d={path}
-                  className={`state-shape level-${level} ${
-                    selectedState === uf ? "selected" : ""
-                  }`}
-                  onMouseEnter={() => setHovered(uf)}
-                  onFocus={() => setHovered(uf)}
-                  onClick={() => onSelect(uf)}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`Selecionar ${resultMap[uf]?.state.name ?? uf}`}
-                />
-              )
-            })}
-          </svg>
-          {tooltip && (
-            <div className="map-tooltip">
-              <div className="tooltip-title">
-                <strong>{tooltip.state.name}</strong>
-                <span>{tooltip.state.id}</span>
-              </div>
-              <div>
-                <span>Votos contabilizados</span>
-                <b>{numberFormat.format(tooltip.status.totalVotes)}</b>
-              </div>
-              <div>
-                <span>Apuração</span>
-                <b>{percentFormat.format(tooltip.status.percentageCounted)}%</b>
-              </div>
-              <div>
-                <span>Liderança</span>
-                <b>
-                  {leader?.ballotName ?? "—"} ·{" "}
-                  {percentFormat.format(leaderVote?.percentage ?? 0)}%
-                </b>
-              </div>
-              <div>
-                <span>Válidos</span>
-                <b>{numberFormat.format(tooltip.status.validVotes)}</b>
-              </div>
-              <div>
-                <span>Brancos / nulos</span>
-                <b>
-                  {numberFormat.format(tooltip.status.blankVotes)} /{" "}
-                  {numberFormat.format(tooltip.status.nullVotes)}
-                </b>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="map-legend">
-          <span>Menor totalização</span>
-          <div>
-            {[1, 2, 3, 4].map((level) => (
-              <i key={level} className={`level-${level}`} />
-            ))}
-          </div>
-          <span>Maior totalização</span>
-        </div>
-      </div>
-    </Card>
   )
 }
 
@@ -914,6 +799,7 @@ function StateDetail({
     ["Votos nulos", result.status.nullVotes],
     ["Abstenções", result.status.abstentions],
   ]
+  const leaderRow = ranking[0]
   return (
     <Card className="detail-card">
       <div className="detail-header">
@@ -926,6 +812,15 @@ function StateDetail({
             {dataset.office} ·{" "}
             {dataset.isDemo ? "Dados demonstrativos" : dataset.source}
           </p>
+          {leaderRow ? (
+            <p className="detail-leader-line">
+              Partido líder: <strong>{leaderRow.candidate?.party ?? "—"}</strong>
+              {" · "}
+              {leaderRow.candidate?.ballotName} ·{" "}
+              {percentFormat.format(leaderRow.vote.percentage)}% ·{" "}
+              {numberFormat.format(leaderRow.vote.votes)} votos
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -951,7 +846,7 @@ function StateDetail({
         </div>
       </div>
       <div className="detail-ranking">
-        <h3>Resultado no estado</h3>
+        <h3>Ranking no estado</h3>
         {ranking.map(({ vote, candidate }, index) => (
           <div key={vote.candidateId}>
             <span>{index + 1}</span>
@@ -1399,24 +1294,26 @@ export default function App() {
                 </>
               )}
             </div>
-            <div className="hero-grid">
-              <BrazilMap
-                dataset={dataset}
-                selectedState={selectedState}
-                onSelect={chooseState}
-              />
+            <ElectoralMap
+              dataset={dataset}
+              office={office}
+              selectedState={selectedState}
+              onSelect={chooseState}
+              updatedAtLabel={updateTime}
+            />
+            <div className="hero-grid map-follow">
               <CandidateRanking
                 ranking={ranking}
                 isDemo={dataset.isDemo}
                 selectedState={selectedState}
                 office={office}
               />
+              <BarChart ranking={ranking} />
             </div>
             <div className="charts-grid">
-              <BarChart ranking={ranking} />
               <EvolutionChart dataset={dataset} />
             </div>
-            {selectedResult && (
+            {selectedResult && selectedState !== "BR" && (
               <StateDetail
                 result={selectedResult}
                 dataset={dataset}
@@ -1442,12 +1339,21 @@ export default function App() {
         <div className="footer-meta">
           <div>
             <span className={`status-dot ${status}`} />
-            Fonte dos dados: <strong>{dataset?.source ?? "TSE/TRE"}</strong> ·
-            Última atualização: {updateTime}
+            {dataset?.isDemo ? (
+              <>
+                <strong>MODO DEMONSTRAÇÃO</strong> — dados sintéticos, não
+                oficiais.
+              </>
+            ) : (
+              <>
+                Dados de apuração: fonte oficial TSE/TRE. Atualização conforme
+                disponibilidade da fonte.
+              </>
+            )}
           </div>
           <p>
-            Os dados apresentados dependem da disponibilidade e atualização da
-            fonte oficial.
+            Última atualização: <strong>{updateTime}</strong>
+            {dataset?.source ? ` · ${dataset.source}` : ""}
           </p>
         </div>
         <p className="copyright">
